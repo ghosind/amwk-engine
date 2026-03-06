@@ -76,7 +76,6 @@ func (ctx *Context) Next() error {
 	ctx.index++
 	for ctx.index < len(ctx.handlers) && !ctx.isAbort {
 		handler := ctx.handlers[ctx.index]
-		ctx.index++
 
 		var err error
 		func() {
@@ -94,6 +93,8 @@ func (ctx *Context) Next() error {
 		if err != nil {
 			return err
 		}
+
+		ctx.index++
 	}
 
 	return nil
