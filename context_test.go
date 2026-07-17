@@ -184,13 +184,18 @@ func TestContext_Next_Panic(t *testing.T) {
 		return nil
 	})
 
-	err := ctx.Next()
-	if !errors.Is(err, expectedErr) {
-		t.Errorf("Expected Next to return panic error %v, got %v", expectedErr, err)
-	}
-	if !reflect.DeepEqual(seq, []int{1, 2}) {
-		t.Errorf("Expected handler sequence [1 2], got %v", seq)
-	}
+	defer func() {
+		if r := recover(); r == nil {
+			t.Fatalf("Expected panic, but Next did not panic")
+		} else if err, ok := r.(error); !ok || !errors.Is(err, expectedErr) {
+			t.Errorf("Expected panic error %v, got %v", expectedErr, r)
+		}
+		if !reflect.DeepEqual(seq, []int{1, 2}) {
+			t.Errorf("Expected handler sequence [1 2], got %v", seq)
+		}
+	}()
+
+	ctx.Next()
 }
 
 func TestContext_Next_PanicNonError(t *testing.T) {
@@ -211,13 +216,18 @@ func TestContext_Next_PanicNonError(t *testing.T) {
 		return nil
 	})
 
-	err := ctx.Next()
-	if err == nil || err.Error() != "panic: unexpected panic" {
-		t.Errorf("Expected Next to return panic error with message 'panic: unexpected panic', got %v", err)
-	}
-	if !reflect.DeepEqual(seq, []int{1, 2}) {
-		t.Errorf("Expected handler sequence [1 2], got %v", seq)
-	}
+	defer func() {
+		if r := recover(); r == nil {
+			t.Fatalf("Expected panic, but Next did not panic")
+		} else if err, ok := r.(string); !ok || err != "unexpected panic" {
+			t.Errorf("Expected panic error 'unexpected panic', got %v", r)
+		}
+		if !reflect.DeepEqual(seq, []int{1, 2}) {
+			t.Errorf("Expected handler sequence [1 2], got %v", seq)
+		}
+	}()
+
+	ctx.Next()
 }
 
 func TestContext_Use(t *testing.T) {
