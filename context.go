@@ -3,37 +3,37 @@ package engine
 import (
 	"context"
 	"errors"
-	"fmt"
 	"io"
 	"mime"
 	"net/http"
 	"net/url"
 	"strings"
 	"sync"
+	"sync/atomic"
 
 	"github.com/go-amwk/core"
 )
 
 type Context struct {
 	app core.Application
-
-	state    sync.Map
-	index    int
-	isAbort  bool
-	handlers []core.HandlerFunc
-
 	req core.Request
 	res core.Response
+
+	state    map[string]any
+	mu       sync.Mutex
+	index    int
+	isAbort  atomic.Bool
+	handlers []core.HandlerFunc
 }
 
 func NewContext(app core.Application, req core.Request, res core.Response) *Context {
 	ctx := new(Context)
 	ctx.app = app
-	ctx.index = -1
-	ctx.isAbort = false
+	ctx.index = 0
+	ctx.isAbort.Store(false)
 	ctx.req = req
 	ctx.res = res
-	ctx.state = sync.Map{}
+	ctx.state = make(map[string]any)
 
 	ctx.handlers = make([]core.HandlerFunc, 0)
 
@@ -42,12 +42,18 @@ func NewContext(app core.Application, req core.Request, res core.Response) *Cont
 
 // Get returns the value associated with the key in the context.
 func (ctx *Context) Get(key string) (any, bool) {
-	return ctx.state.Load(key)
+	ctx.mu.Lock()
+	defer ctx.mu.Unlock()
+	value, ok := ctx.state[key]
+	return value, ok
 }
 
 // Set sets the value for the key in the context and returns the previous value.
 func (ctx *Context) Set(key string, value any) any {
-	oldValue, _ := ctx.state.Swap(key, value)
+	ctx.mu.Lock()
+	defer ctx.mu.Unlock()
+	oldValue := ctx.state[key]
+	ctx.state[key] = value
 	return oldValue
 }
 
@@ -63,44 +69,68 @@ func (ctx *Context) Application() core.Application {
 
 // Abort marks the context as aborted, and subsequent handlers will not be executed.
 func (ctx *Context) Abort() {
-	ctx.isAbort = true
+	ctx.isAbort.Store(true)
 }
 
 // IsAbort checks if the context is marked as aborted.
 func (ctx *Context) IsAbort() bool {
-	return ctx.isAbort
+	return ctx.isAbort.Load()
 }
 
-// Next calls the next handler in the handlers chain.
+// Next executes the remaining handlers in the chain sequentially.
+//
+// Next is designed to be called both at the top level (to start handler chain execution)
+// and from within a handler to implement nested middleware patterns. This allows handlers
+// to wrap subsequent handlers, executing code both before and after them:
+//
+//	ctx.Use(func(c core.Context) error {
+//	    // pre-processing
+//	    c.Next()              // executes all remaining handlers
+//	    // post-processing
+//	    return nil
+//	})
+//
+// Behavior:
+//   - Each handler in the chain is executed exactly once per Next call.
+//   - If a handler returns an error, execution stops immediately and that error is returned.
+//   - If a handler panics, the panic is propagated up the call stack, and subsequent handlers are
+//     not executed.
+//   - Calling Next multiple times from the same handler is safe but idempotent:
+//     the second and subsequent calls are no-ops (all remaining handlers have already run).
+//   - Next is NOT safe for concurrent use from multiple goroutines.
+//   - Calling [Context.Abort] before Next starts prevents all handlers from executing.
+//   - Calling [Context.Abort] from within a handler prevents subsequent handlers
+//     from executing, but the current handler continues to completion.
 func (ctx *Context) Next() error {
-	ctx.index++
-	for ctx.index < len(ctx.handlers) && !ctx.isAbort {
+	for !ctx.isAbort.Load() && ctx.index < len(ctx.handlers) {
 		handler := ctx.handlers[ctx.index]
+		ctx.index++
 
-		var err error
-		func() {
-			defer func() {
-				if r := recover(); r != nil {
-					if e, ok := r.(error); ok {
-						err = e
-					} else {
-						err = fmt.Errorf("panic: %v", r)
-					}
-				}
-			}()
-			err = handler(ctx)
-		}()
-		if err != nil {
+		if err := handler(ctx); err != nil {
 			return err
 		}
-
-		ctx.index++
 	}
 
 	return nil
 }
 
-// Use adds handlers to the context, which will be executed in the order they are added.
+// Use appends handlers to the context's handler chain. Handlers are executed
+// in the order they are added when [Context.Next] is called.
+//
+// Use may be called before Next to register handlers upfront, or from within a
+// handler during Next execution to dynamically append additional handlers:
+//
+//	ctx.Use(func(c core.Context) error {
+//	    // conditional middleware injection
+//	    ctx.Use(authMiddleware)
+//	    return c.Next()
+//	})
+//
+// Handlers added during Next execution will be picked up by the current Next
+// loop if the current index has not yet passed them — i.e., dynamically added
+// handlers at the tail of the chain will still execute.
+//
+// Use is NOT safe for concurrent use from multiple goroutines.
 func (ctx *Context) Use(handlers ...core.HandlerFunc) {
 	ctx.handlers = append(ctx.handlers, handlers...)
 }
