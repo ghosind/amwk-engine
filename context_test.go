@@ -339,7 +339,7 @@ func TestContext_ClientIPs(t *testing.T) {
 			want:     []string{"203.0.113.1", "10.0.0.1"},
 		},
 		{
-			name:     "both headers dedup",
+			name:     "both headers deduplicated",
 			xff:      "203.0.113.1, 198.51.100.2",
 			realIP:   "203.0.113.1",
 			clientIP: "198.51.100.2",
@@ -348,6 +348,13 @@ func TestContext_ClientIPs(t *testing.T) {
 		{
 			name:     "XFF with whitespace",
 			xff:      " 203.0.113.1 ,  198.51.100.2 ",
+			realIP:   "",
+			clientIP: "10.0.0.1",
+			want:     []string{"203.0.113.1", "198.51.100.2", "10.0.0.1"},
+		},
+		{
+			name:     "XFF duplicated",
+			xff:      " 203.0.113.1 , 203.0.113.1 , 198.51.100.2 ",
 			realIP:   "",
 			clientIP: "10.0.0.1",
 			want:     []string{"203.0.113.1", "198.51.100.2", "10.0.0.1"},
