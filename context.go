@@ -140,18 +140,54 @@ func (ctx *Context) Body() (io.ReadCloser, error) {
 	return ctx.req.Body()
 }
 
-// ClientIP returns the IP address of the client making the request.
+// ClientIP returns the IP address of the direct TCP connection peer.
 func (ctx *Context) ClientIP() string {
-	proxyIp := ctx.Header("X-Forwarded-For")
-	if proxyIp != "" {
-		ips := strings.Split(proxyIp, ",")
-		if len(ips) > 0 {
-			proxyIp = strings.TrimSpace(ips[0])
-			return proxyIp
+	return ctx.req.ClientIP()
+}
+
+// ClientIPs collects all available client IP information from the request,
+// combining proxy headers with the direct connection IP. The returned slice
+// is deduplicated and preserves the following priority order:
+//
+//  1. X-Forwarded-For chain (original client first, each proxy in order)
+//  2. X-Real-IP (only if not already present from X-Forwarded-For)
+//  3. Direct connection IP (only if not already present from the headers above)
+//
+// The result is never nil; at minimum it contains the direct connection IP.
+func (ctx *Context) ClientIPs() []string {
+	ips := make([]string, 0)
+	recorded := make(map[string]struct{})
+
+	xff := ctx.Header("X-Forwarded-For")
+	if xff != "" {
+		parts := strings.Split(xff, ",")
+		for _, part := range parts {
+			ip := strings.TrimSpace(part)
+			if ip == "" {
+				continue
+			}
+			if _, ok := recorded[ip]; ok {
+				continue
+			}
+			ips = append(ips, ip)
+			recorded[ip] = struct{}{}
+		}
+	}
+	realIP := ctx.Header("X-Real-IP")
+	if realIP != "" {
+		if _, ok := recorded[realIP]; !ok {
+			ips = append(ips, realIP)
+			recorded[realIP] = struct{}{}
 		}
 	}
 
-	return ctx.req.ClientIP()
+	clientIP := ctx.ClientIP()
+	if _, ok := recorded[clientIP]; !ok {
+		ips = append(ips, clientIP)
+	}
+
+	// TODO: add trusted proxy validation to filter out untrusted IPs from the headers.
+	return ips
 }
 
 // ContentLength returns the length of the request body in bytes.

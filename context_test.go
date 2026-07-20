@@ -290,18 +290,108 @@ func TestContext_ClientIP(t *testing.T) {
 	ctx := getDefaultContext()
 	req := ctx.Request().(*Request)
 
+	// ClientIP returns the direct connection IP, independent of proxy headers.
 	if ip := ctx.ClientIP(); ip != "127.0.0.1" {
 		t.Errorf("Expected ClientIP '127.0.0.1', got %v", ip)
 	}
 
-	// X-Forwarded-For takes precedence
+	// Setting proxy headers does NOT affect ClientIP.
 	req.headers.Set("X-Forwarded-For", "203.0.113.1, 10.0.0.1")
-	if ip := ctx.ClientIP(); ip != "203.0.113.1" {
-		t.Errorf("Expected ClientIP to be '203.0.113.1', got %v", ip)
-	}
-	req.headers.Del("X-Forwarded-For")
+	req.headers.Set("X-Real-IP", "198.51.100.1")
 	if ip := ctx.ClientIP(); ip != "127.0.0.1" {
-		t.Errorf("Expected ClientIP to fallback to '127.0.0.1', got %v", ip)
+		t.Errorf("Expected ClientIP to remain '127.0.0.1' regardless of proxy headers, got %v", ip)
+	}
+
+	// Changing the underlying request's client IP is reflected.
+	req.clientIP = "192.168.1.1"
+	if ip := ctx.ClientIP(); ip != "192.168.1.1" {
+		t.Errorf("Expected ClientIP '192.168.1.1', got %v", ip)
+	}
+}
+
+func TestContext_ClientIPs(t *testing.T) {
+	tests := []struct {
+		name     string
+		xff      string
+		realIP   string
+		clientIP string
+		want     []string
+	}{
+		{
+			name:     "no proxy headers",
+			xff:      "",
+			realIP:   "",
+			clientIP: "10.0.0.1",
+			want:     []string{"10.0.0.1"},
+		},
+		{
+			name:     "X-Forwarded-For only",
+			xff:      "203.0.113.1, 198.51.100.2, 10.0.0.1",
+			realIP:   "",
+			clientIP: "10.0.0.1",
+			want:     []string{"203.0.113.1", "198.51.100.2", "10.0.0.1"},
+		},
+		{
+			name:     "X-Real-IP only",
+			xff:      "",
+			realIP:   "203.0.113.1",
+			clientIP: "10.0.0.1",
+			want:     []string{"203.0.113.1", "10.0.0.1"},
+		},
+		{
+			name:     "both headers deduplicated",
+			xff:      "203.0.113.1, 198.51.100.2",
+			realIP:   "203.0.113.1",
+			clientIP: "198.51.100.2",
+			want:     []string{"203.0.113.1", "198.51.100.2"},
+		},
+		{
+			name:     "XFF with whitespace",
+			xff:      " 203.0.113.1 ,  198.51.100.2 ",
+			realIP:   "",
+			clientIP: "10.0.0.1",
+			want:     []string{"203.0.113.1", "198.51.100.2", "10.0.0.1"},
+		},
+		{
+			name:     "XFF duplicated",
+			xff:      " 203.0.113.1 , 203.0.113.1 , 198.51.100.2 ",
+			realIP:   "",
+			clientIP: "10.0.0.1",
+			want:     []string{"203.0.113.1", "198.51.100.2", "10.0.0.1"},
+		},
+		{
+			name:     "XFF with empty entries",
+			xff:      "203.0.113.1, , 198.51.100.2",
+			realIP:   "",
+			clientIP: "10.0.0.1",
+			want:     []string{"203.0.113.1", "198.51.100.2", "10.0.0.1"},
+		},
+		{
+			name:     "all three distinct",
+			xff:      "203.0.113.1",
+			realIP:   "198.51.100.2",
+			clientIP: "10.0.0.1",
+			want:     []string{"203.0.113.1", "198.51.100.2", "10.0.0.1"},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			ctx := getDefaultContext()
+			req := ctx.Request().(*Request)
+			req.clientIP = tt.clientIP
+			if tt.xff != "" {
+				req.headers.Set("X-Forwarded-For", tt.xff)
+			}
+			if tt.realIP != "" {
+				req.headers.Set("X-Real-IP", tt.realIP)
+			}
+
+			got := ctx.ClientIPs()
+			if !reflect.DeepEqual(got, tt.want) {
+				t.Errorf("ClientIPs() = %v, want %v", got, tt.want)
+			}
+		})
 	}
 }
 
