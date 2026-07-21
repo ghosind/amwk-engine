@@ -5,6 +5,7 @@ import (
 	"errors"
 	"io"
 	"net/http"
+	"net/http/httptest"
 	"reflect"
 	"testing"
 
@@ -14,8 +15,8 @@ import (
 
 func TestContext(t *testing.T) {
 	app := NewApplication()
-	req := NewRequest()
-	res := NewResponse()
+	req := NewRequest(nil)
+	res := NewResponse(nil)
 
 	ctx := engine.NewContext(app, req, res)
 	if !reflect.DeepEqual(ctx.Application(), app) {
@@ -30,7 +31,7 @@ func TestContext(t *testing.T) {
 }
 
 func TestContext_Get(t *testing.T) {
-	ctx := getDefaultContext()
+	ctx := getDefaultContext(nil, nil)
 	key := "test_key"
 	expected := "test_value"
 
@@ -49,7 +50,7 @@ func TestContext_Get(t *testing.T) {
 }
 
 func TestContext_Set(t *testing.T) {
-	ctx := getDefaultContext()
+	ctx := getDefaultContext(nil, nil)
 	key := "test_key"
 	value1 := "test_value1"
 	value2 := "test_value2"
@@ -69,7 +70,7 @@ func TestContext_Set(t *testing.T) {
 }
 
 func TestContext_Context(t *testing.T) {
-	ctx := getDefaultContext()
+	ctx := getDefaultContext(httptest.NewRequest("GET", "/test", nil), nil)
 
 	if !reflect.DeepEqual(ctx.Context(), ctx.Request().Context()) {
 		t.Errorf("Expected Context to return the same context as Request.Context(), got %v", ctx.Context())
@@ -77,7 +78,7 @@ func TestContext_Context(t *testing.T) {
 }
 
 func TestContext_Abort(t *testing.T) {
-	ctx := getDefaultContext()
+	ctx := getDefaultContext(nil, nil)
 	seq := []int{}
 
 	ctx.Use(func(c core.Context) error {
@@ -106,7 +107,7 @@ func TestContext_Abort(t *testing.T) {
 }
 
 func TestContext_Next(t *testing.T) {
-	ctx := getDefaultContext()
+	ctx := getDefaultContext(nil, nil)
 	seq := []int{}
 
 	ctx.Use(func(c core.Context) error {
@@ -140,7 +141,7 @@ func TestContext_Next(t *testing.T) {
 }
 
 func TestContext_Next_ReturnError(t *testing.T) {
-	ctx := getDefaultContext()
+	ctx := getDefaultContext(nil, nil)
 	expectedErr := errors.New("handler error")
 	seq := []int{}
 
@@ -167,7 +168,7 @@ func TestContext_Next_ReturnError(t *testing.T) {
 }
 
 func TestContext_Next_Panic(t *testing.T) {
-	ctx := getDefaultContext()
+	ctx := getDefaultContext(nil, nil)
 	expectedErr := errors.New("handler panic")
 	seq := []int{}
 
@@ -199,7 +200,7 @@ func TestContext_Next_Panic(t *testing.T) {
 }
 
 func TestContext_Next_PanicNonError(t *testing.T) {
-	ctx := getDefaultContext()
+	ctx := getDefaultContext(nil, nil)
 	expectedPanic := "unexpected panic"
 	seq := []int{}
 
@@ -231,7 +232,7 @@ func TestContext_Next_PanicNonError(t *testing.T) {
 }
 
 func TestContext_Use(t *testing.T) {
-	ctx := getDefaultContext()
+	ctx := getDefaultContext(nil, nil)
 	ctx.Use(func(c core.Context) error {
 		c.Set("a", 1)
 		return nil
@@ -248,7 +249,7 @@ func TestContext_Use(t *testing.T) {
 }
 
 func TestContext_Use_InNext(t *testing.T) {
-	ctx := getDefaultContext()
+	ctx := getDefaultContext(nil, nil)
 	outer := false
 	inner := false
 	ctx.Use(func(c core.Context) error {
@@ -272,9 +273,7 @@ func TestContext_Use_InNext(t *testing.T) {
 }
 
 func TestContext_Body(t *testing.T) {
-	ctx := getDefaultContext()
-	req := ctx.Request().(*Request)
-	req.body = io.NopCloser(bytes.NewReader([]byte("hello")))
+	ctx := getDefaultContext(httptest.NewRequest(http.MethodGet, "/test", bytes.NewBufferString("hello")), nil)
 
 	rc, err := ctx.Body()
 	if err != nil {
@@ -287,25 +286,31 @@ func TestContext_Body(t *testing.T) {
 }
 
 func TestContext_ClientIP(t *testing.T) {
-	ctx := getDefaultContext()
-	req := ctx.Request().(*Request)
+	req := httptest.NewRequest(http.MethodGet, "/test", nil)
+	ctx := getDefaultContext(req, nil)
 
 	// ClientIP returns the direct connection IP, independent of proxy headers.
-	if ip := ctx.ClientIP(); ip != "127.0.0.1" {
-		t.Errorf("Expected ClientIP '127.0.0.1', got %v", ip)
+	if ip := ctx.ClientIP(); ip != "192.0.2.1" {
+		t.Errorf("Expected ClientIP '192.0.2.1', got %v", ip)
 	}
 
 	// Setting proxy headers does NOT affect ClientIP.
-	req.headers.Set("X-Forwarded-For", "203.0.113.1, 10.0.0.1")
-	req.headers.Set("X-Real-IP", "198.51.100.1")
-	if ip := ctx.ClientIP(); ip != "127.0.0.1" {
-		t.Errorf("Expected ClientIP to remain '127.0.0.1' regardless of proxy headers, got %v", ip)
+	req.Header.Set("X-Forwarded-For", "203.0.113.1, 10.0.0.1")
+	req.Header.Set("X-Real-IP", "198.51.100.1")
+	if ip := ctx.ClientIP(); ip != "192.0.2.1" {
+		t.Errorf("Expected ClientIP to remain '192.0.2.1' regardless of proxy headers, got %v", ip)
 	}
 
 	// Changing the underlying request's client IP is reflected.
-	req.clientIP = "192.168.1.1"
+	req.RemoteAddr = "192.168.1.1:2345"
 	if ip := ctx.ClientIP(); ip != "192.168.1.1" {
 		t.Errorf("Expected ClientIP '192.168.1.1', got %v", ip)
+	}
+
+	// Changing the underlying request's RemoteAddr to ipv6
+	req.RemoteAddr = "[2001:db8::1]:12345"
+	if ip := ctx.ClientIP(); ip != "2001:db8::1" {
+		t.Errorf("Expected ClientIP '2001:db8::1', got %v", ip)
 	}
 }
 
@@ -321,70 +326,70 @@ func TestContext_ClientIPs(t *testing.T) {
 			name:     "no proxy headers",
 			xff:      "",
 			realIP:   "",
-			clientIP: "10.0.0.1",
+			clientIP: "10.0.0.1:1234",
 			want:     []string{"10.0.0.1"},
 		},
 		{
 			name:     "X-Forwarded-For only",
 			xff:      "203.0.113.1, 198.51.100.2, 10.0.0.1",
 			realIP:   "",
-			clientIP: "10.0.0.1",
+			clientIP: "10.0.0.1:1234",
 			want:     []string{"203.0.113.1", "198.51.100.2", "10.0.0.1"},
 		},
 		{
 			name:     "X-Real-IP only",
 			xff:      "",
 			realIP:   "203.0.113.1",
-			clientIP: "10.0.0.1",
+			clientIP: "10.0.0.1:1234",
 			want:     []string{"203.0.113.1", "10.0.0.1"},
 		},
 		{
 			name:     "both headers deduplicated",
 			xff:      "203.0.113.1, 198.51.100.2",
 			realIP:   "203.0.113.1",
-			clientIP: "198.51.100.2",
+			clientIP: "198.51.100.2:1234",
 			want:     []string{"203.0.113.1", "198.51.100.2"},
 		},
 		{
 			name:     "XFF with whitespace",
 			xff:      " 203.0.113.1 ,  198.51.100.2 ",
 			realIP:   "",
-			clientIP: "10.0.0.1",
+			clientIP: "10.0.0.1:1234",
 			want:     []string{"203.0.113.1", "198.51.100.2", "10.0.0.1"},
 		},
 		{
 			name:     "XFF duplicated",
 			xff:      " 203.0.113.1 , 203.0.113.1 , 198.51.100.2 ",
 			realIP:   "",
-			clientIP: "10.0.0.1",
+			clientIP: "10.0.0.1:1234",
 			want:     []string{"203.0.113.1", "198.51.100.2", "10.0.0.1"},
 		},
 		{
 			name:     "XFF with empty entries",
 			xff:      "203.0.113.1, , 198.51.100.2",
 			realIP:   "",
-			clientIP: "10.0.0.1",
+			clientIP: "10.0.0.1:1234",
 			want:     []string{"203.0.113.1", "198.51.100.2", "10.0.0.1"},
 		},
 		{
 			name:     "all three distinct",
 			xff:      "203.0.113.1",
 			realIP:   "198.51.100.2",
-			clientIP: "10.0.0.1",
+			clientIP: "10.0.0.1:1234",
 			want:     []string{"203.0.113.1", "198.51.100.2", "10.0.0.1"},
 		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			ctx := getDefaultContext()
-			req := ctx.Request().(*Request)
-			req.clientIP = tt.clientIP
+			req := httptest.NewRequest(http.MethodGet, "/test", nil)
+			ctx := getDefaultContext(req, nil)
+			req.RemoteAddr = tt.clientIP
 			if tt.xff != "" {
-				req.headers.Set("X-Forwarded-For", tt.xff)
+				req.Header.Set("X-Forwarded-For", tt.xff)
 			}
 			if tt.realIP != "" {
-				req.headers.Set("X-Real-IP", tt.realIP)
+				req.Header.Set("X-Real-IP", tt.realIP)
 			}
 
 			got := ctx.ClientIPs()
@@ -396,41 +401,44 @@ func TestContext_ClientIPs(t *testing.T) {
 }
 
 func TestContext_ContentLength(t *testing.T) {
-	ctx := getDefaultContext()
-	req := ctx.Request().(*Request)
-	req.contentLength = 999
-	if l := ctx.ContentLength(); l != 999 {
-		t.Errorf("Expected ContentLength 999, got %d", l)
+	data := "test data"
+	req := httptest.NewRequest(http.MethodPost, "/test", bytes.NewBufferString(data))
+	ctx := getDefaultContext(req, nil)
+
+	if l := ctx.ContentLength(); l != int64(len(data)) {
+		t.Errorf("Expected ContentLength %d, got %d", len(data), l)
 	}
 }
 
 func TestContext_ContentType(t *testing.T) {
-	ctx := getDefaultContext()
-	req := ctx.Request().(*Request)
-	req.headers.Set("Content-Type", "application/json; charset=utf-8")
+	req := httptest.NewRequest(http.MethodGet, "/test", nil)
+	ctx := getDefaultContext(req, nil)
+
+	req.Header.Set("Content-Type", "application/json; charset=utf-8")
 	if ct := ctx.ContentType(); ct != "application/json" {
 		t.Errorf("Expected ContentType 'application/json', got %v", ct)
 	}
-	req.headers.Del("Content-Type")
+	req.Header.Del("Content-Type")
 	if ct := ctx.ContentType(); ct != "" {
 		t.Errorf("Expected empty ContentType, got %v", ct)
 	}
 }
 
 func TestContext_Header(t *testing.T) {
-	ctx := getDefaultContext()
-	req := ctx.Request().(*Request)
-	req.headers.Set("X-Test-Header", "v")
+	req := httptest.NewRequest(http.MethodGet, "/test", nil)
+	ctx := getDefaultContext(req, nil)
+
+	req.Header.Set("X-Test-Header", "v")
 	if got := ctx.Header("X-Test-Header"); got != "v" {
 		t.Errorf("Expected header 'v', got %v", got)
 	}
 }
 
 func TestContext_HeaderValues(t *testing.T) {
-	ctx := getDefaultContext()
-	req := ctx.Request().(*Request)
-	req.headers.Add("X-Test", "a")
-	req.headers.Add("X-Test", "b")
+	req := httptest.NewRequest(http.MethodGet, "/test", nil)
+	ctx := getDefaultContext(req, nil)
+	req.Header.Add("X-Test", "a")
+	req.Header.Add("X-Test", "b")
 	hv := ctx.HeaderValues("X-Test")
 	if !reflect.DeepEqual(hv, []string{"a", "b"}) {
 		t.Errorf("Expected HeaderValues ['a','b'], got %v", hv)
@@ -438,9 +446,9 @@ func TestContext_HeaderValues(t *testing.T) {
 }
 
 func TestContext_Headers(t *testing.T) {
-	ctx := getDefaultContext()
-	req := ctx.Request().(*Request)
-	req.headers.Set("A", "1")
+	req := httptest.NewRequest(http.MethodGet, "/test", nil)
+	ctx := getDefaultContext(req, nil)
+	req.Header.Set("A", "1")
 	headers := ctx.Headers()
 	if headers.Get("A") != "1" {
 		t.Errorf("Expected Headers to contain A=1, got %v", headers)
@@ -448,9 +456,10 @@ func TestContext_Headers(t *testing.T) {
 }
 
 func TestContext_Cookie(t *testing.T) {
-	ctx := getDefaultContext()
-	req := ctx.Request().(*Request)
-	req.cookies = []*http.Cookie{{Name: "sid", Value: "abc"}}
+	req := httptest.NewRequest(http.MethodGet, "/test", nil)
+	ctx := getDefaultContext(req, nil)
+
+	req.AddCookie(&http.Cookie{Name: "sid", Value: "abc"})
 	c, err := ctx.Cookie("sid")
 	if err != nil || c.Value != "abc" {
 		t.Fatalf("Cookie lookup failed: %v, %v", c, err)
@@ -458,9 +467,9 @@ func TestContext_Cookie(t *testing.T) {
 }
 
 func TestContext_Cookies(t *testing.T) {
-	ctx := getDefaultContext()
-	req := ctx.Request().(*Request)
-	req.cookies = []*http.Cookie{{Name: "s", Value: "1"}}
+	req := httptest.NewRequest(http.MethodGet, "/test", nil)
+	ctx := getDefaultContext(req, nil)
+	req.AddCookie(&http.Cookie{Name: "s", Value: "1"})
 	cs := ctx.Cookies()
 	if len(cs) != 1 {
 		t.Errorf("Expected 1 cookie, got %d", len(cs))
@@ -468,27 +477,24 @@ func TestContext_Cookies(t *testing.T) {
 }
 
 func TestContext_Query(t *testing.T) {
-	ctx := getDefaultContext()
-	req := ctx.Request().(*Request)
-	req.queryValues.Set("q", "v")
+	req := httptest.NewRequest(http.MethodGet, "/test?q=v", nil)
+	ctx := getDefaultContext(req, nil)
 	if q := ctx.Query("q"); q != "v" {
 		t.Errorf("Expected Query 'v', got %v", q)
 	}
 }
 
 func TestContext_QueryValues(t *testing.T) {
-	ctx := getDefaultContext()
-	req := ctx.Request().(*Request)
-	req.queryValues["m"] = []string{"x", "y"}
+	req := httptest.NewRequest(http.MethodGet, "/test?m=x&m=y", nil)
+	ctx := getDefaultContext(req, nil)
 	if !reflect.DeepEqual(ctx.QueryValues("m"), []string{"x", "y"}) {
 		t.Errorf("Expected QueryValues ['x','y'], got %v", ctx.QueryValues("m"))
 	}
 }
 
 func TestContext_Queries(t *testing.T) {
-	ctx := getDefaultContext()
-	req := ctx.Request().(*Request)
-	req.queryValues.Set("a", "b")
+	req := httptest.NewRequest(http.MethodGet, "/test?a=b", nil)
+	ctx := getDefaultContext(req, nil)
 	qs := ctx.Queries()
 	if qs.Get("a") != "b" {
 		t.Errorf("Expected Queries to contain a=b, got %v", qs)
@@ -496,8 +502,8 @@ func TestContext_Queries(t *testing.T) {
 }
 
 func TestContext_PathValue(t *testing.T) {
-	ctx := getDefaultContext()
-	req := ctx.Request().(*Request)
+	req := httptest.NewRequest(http.MethodGet, "/test", nil)
+	ctx := getDefaultContext(req, nil)
 	req.SetPathValue("id", "123")
 	if pv := ctx.PathValue("id"); pv != "123" {
 		t.Errorf("Expected PathValue '123', got %v", pv)
@@ -505,47 +511,51 @@ func TestContext_PathValue(t *testing.T) {
 }
 
 func TestContext_Resource(t *testing.T) {
-	ctx := getDefaultContext()
-	req := ctx.Request().(*Request)
-	req.SetResource("/r")
+	req := httptest.NewRequest(http.MethodGet, "/test", nil)
+	ctx := getDefaultContext(req, nil)
+	ctx.Request().SetResource("/r")
 	if r := ctx.Resource(); r != "/r" {
 		t.Errorf("Expected Resource '/r', got %v", r)
 	}
 }
 
 func TestContext_Method_Protocol_Path(t *testing.T) {
-	ctx := getDefaultContext()
-	req := ctx.Request().(*Request)
-	req.method = "POST"
-	req.protocol = "HTTP/2.0"
-	req.path = "/p"
-	if ctx.Method() != "POST" || ctx.Protocol() != "HTTP/2.0" || ctx.Path() != "/p" {
+	req := httptest.NewRequest(http.MethodPost, "/test", nil)
+	ctx := getDefaultContext(req, nil)
+	if ctx.Method() != "POST" || ctx.Protocol() != "HTTP/1.1" || ctx.Path() != "/test" {
 		t.Errorf("Method/Protocol/Path mismatch")
 	}
 }
 
 func TestContext_AddHeader(t *testing.T) {
-	ctx := getDefaultContext()
+	rr := httptest.NewRecorder()
+	resp := NewResponse(rr)
+	ctx := getDefaultContext(nil, resp)
 	ctx.AddHeader("X-Test", "v")
-	if ctx.Response().Headers().Get("X-Test") != "v" {
-		t.Errorf("Expected AddHeader to set X-Test=v, got %v", ctx.Response().Headers().Get("X-Test"))
+	resp.send()
+
+	if rr.Header().Get("X-Test") != "v" {
+		t.Errorf("Expected AddHeader to set X-Test=v, got %v", rr.Header().Get("X-Test"))
 	}
 }
 
 func TestContext_SetHeader(t *testing.T) {
-	ctx := getDefaultContext()
+	rr := httptest.NewRecorder()
+	resp := NewResponse(rr)
+	ctx := getDefaultContext(nil, resp)
 	ctx.SetHeader("X-Test", "v")
-	if ctx.Response().Headers().Get("X-Test") != "v" {
-		t.Errorf("Expected SetHeader to set X-Test=v, got %v", ctx.Response().Headers().Get("X-Test"))
-	}
 	ctx.SetHeader("X-Test", "v2")
-	if ctx.Response().Headers().Get("X-Test") != "v2" {
-		t.Errorf("Expected SetHeader to overwrite X-Test=v2, got %v", ctx.Response().Headers().Get("X-Test"))
+
+	resp.send()
+
+	if rr.Header().Get("X-Test") != "v2" {
+		t.Errorf("Expected SetHeader to overwrite X-Test=v2, got %v", rr.Header().Get("X-Test"))
 	}
 }
 
 func TestContext_GetHeader(t *testing.T) {
-	ctx := getDefaultContext()
+	resp := NewResponse(httptest.NewRecorder())
+	ctx := getDefaultContext(nil, resp)
 	ctx.SetHeader("X-Test", "v")
 	if h := ctx.GetHeader("X-Test"); h != "v" {
 		t.Errorf("Expected GetHeader to return 'v', got %v", h)
@@ -553,32 +563,50 @@ func TestContext_GetHeader(t *testing.T) {
 }
 
 func TestContext_DelHeader(t *testing.T) {
-	ctx := getDefaultContext()
+	rr := httptest.NewRecorder()
+	resp := NewResponse(rr)
+	ctx := getDefaultContext(nil, resp)
 	ctx.SetHeader("X-Test", "v")
 	ctx.DelHeader("X-Test")
 	if h := ctx.GetHeader("X-Test"); h != "" {
 		t.Errorf("Expected DelHeader to remove X-Test, got %v", h)
 	}
+
+	resp.send()
+
+	if rr.Header().Get("X-Test") != "" {
+		t.Errorf("Expected sent header X-Test to be deleted, got %v", rr.Header().Get("X-Test"))
+	}
 }
 
 func TestContext_Status(t *testing.T) {
-	ctx := getDefaultContext()
-	if err := ctx.Status(201); err != nil {
-		t.Fatalf("Status returned error: %v", err)
-	}
-	if ctx.Response().StatusCode() != 201 {
-		t.Errorf("Expected status code 201, got %d", ctx.Response().StatusCode())
-	}
+	rr := httptest.NewRecorder()
+	resp := NewResponse(rr)
+	ctx := getDefaultContext(nil, resp)
 	if err := ctx.Status(99); err == nil {
 		t.Errorf("Expected Status to return error for invalid code 99")
 	}
 	if err := ctx.Status(1000); err == nil {
 		t.Errorf("Expected Status to return error for invalid code 1000")
 	}
+	if err := ctx.Status(201); err != nil {
+		t.Fatalf("Status returned error: %v", err)
+	}
+	if ctx.Response().StatusCode() != 201 {
+		t.Errorf("Expected status code 201, got %d", ctx.Response().StatusCode())
+	}
+
+	resp.send()
+
+	if rr.Code != 201 {
+		t.Errorf("Expected sent status code 201, got %d", rr.Code)
+	}
 }
 
 func TestContext_Write(t *testing.T) {
-	ctx := getDefaultContext()
+	rr := httptest.NewRecorder()
+	resp := NewResponse(rr)
+	ctx := getDefaultContext(nil, resp)
 	n, err := ctx.Write([]byte("hello"))
 	if err != nil {
 		t.Fatalf("Write returned error: %v", err)
@@ -586,12 +614,23 @@ func TestContext_Write(t *testing.T) {
 	if n != 5 {
 		t.Errorf("Expected Write to write 5 bytes, got %d", n)
 	}
+
+	resp.send()
+
+	if rr.Body.String() != "hello" {
+		t.Errorf("Expected sent body 'hello', got %v", rr.Body.String())
+	}
 }
 
-func getDefaultContext() *engine.Context {
+func getDefaultContext(r *http.Request, res *Response) *engine.Context {
+	if r == nil {
+		r = httptest.NewRequest(http.MethodGet, "/", nil)
+	}
+	if res == nil {
+		res = NewResponse(httptest.NewRecorder())
+	}
 	app := NewApplication()
-	req := NewRequest()
-	res := NewResponse()
+	req := NewRequest(r)
 
 	return engine.NewContext(app, req, res)
 }
