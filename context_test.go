@@ -3,10 +3,12 @@ package engine_test
 import (
 	"bytes"
 	"errors"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
 	"reflect"
+	"strings"
 	"testing"
 
 	"github.com/go-amwk/core"
@@ -619,6 +621,330 @@ func TestContext_Write(t *testing.T) {
 
 	if rr.Body.String() != "hello" {
 		t.Errorf("Expected sent body 'hello', got %v", rr.Body.String())
+	}
+}
+
+func TestContext_String(t *testing.T) {
+	rr := httptest.NewRecorder()
+	resp := NewResponse(rr)
+	ctx := getDefaultContext(nil, resp)
+	n, err := ctx.String("hello")
+	if err != nil {
+		t.Fatalf("String returned error: %v", err)
+	}
+	if n != 5 {
+		t.Errorf("Expected String to write 5 bytes, got %d", n)
+	}
+
+	resp.send()
+
+	if rr.Body.String() != "hello" {
+		t.Errorf("Expected sent body 'hello', got %v", rr.Body.String())
+	}
+	if rr.Header().Get("Content-Type") != "text/plain; charset=utf-8" {
+		t.Errorf("Expected Content-Type 'text/plain; charset=utf-8', got %v", rr.Header().Get("Content-Type"))
+	}
+}
+
+func TestContext_String_PreserveContentType(t *testing.T) {
+	rr := httptest.NewRecorder()
+	resp := NewResponse(rr)
+	ctx := getDefaultContext(nil, resp)
+	ctx.SetHeader("Content-Type", "text/html; charset=utf-8")
+	n, err := ctx.String("<p>hello</p>")
+	if err != nil {
+		t.Fatalf("String returned error: %v", err)
+	}
+	if n != 12 {
+		t.Errorf("Expected String to write 12 bytes, got %d", n)
+	}
+
+	resp.send()
+
+	if rr.Header().Get("Content-Type") != "text/html; charset=utf-8" {
+		t.Errorf("Expected Content-Type to be preserved as 'text/html; charset=utf-8', got %v", rr.Header().Get("Content-Type"))
+	}
+}
+
+func TestContext_JSON(t *testing.T) {
+	rr := httptest.NewRecorder()
+	resp := NewResponse(rr)
+	ctx := getDefaultContext(nil, resp)
+	data := map[string]string{"key": "value"}
+	n, err := ctx.JSON(data)
+	if err != nil {
+		t.Fatalf("JSON returned error: %v", err)
+	}
+	expectedJSON := `{"key":"value"}`
+	if n != len(expectedJSON) {
+		t.Errorf("Expected JSON to write %d bytes, got %d", len(expectedJSON), n)
+	}
+
+	resp.send()
+
+	if rr.Body.String() != expectedJSON {
+		t.Errorf("Expected sent body '%s', got '%s'", expectedJSON, rr.Body.String())
+	}
+	if rr.Header().Get("Content-Type") != "application/json" {
+		t.Errorf("Expected Content-Type 'application/json', got %v", rr.Header().Get("Content-Type"))
+	}
+}
+
+func TestContext_JSON_PreserveContentType(t *testing.T) {
+	rr := httptest.NewRecorder()
+	resp := NewResponse(rr)
+	ctx := getDefaultContext(nil, resp)
+	ctx.SetHeader("Content-Type", "application/json; charset=utf-8")
+	data := map[string]string{"key": "value"}
+	_, err := ctx.JSON(data)
+	if err != nil {
+		t.Fatalf("JSON returned error: %v", err)
+	}
+
+	resp.send()
+
+	if rr.Header().Get("Content-Type") != "application/json; charset=utf-8" {
+		t.Errorf("Expected Content-Type to be preserved as 'application/json; charset=utf-8', got %v", rr.Header().Get("Content-Type"))
+	}
+}
+
+func TestContext_JSON_MarshalError(t *testing.T) {
+	resp := NewResponse(httptest.NewRecorder())
+	ctx := getDefaultContext(nil, resp)
+	// channel and func types cannot be marshaled to JSON
+	_, err := ctx.JSON(make(chan int))
+	if err == nil {
+		t.Fatalf("Expected JSON to return error for unmarshalable type")
+	}
+}
+
+func TestContext_String_Empty(t *testing.T) {
+	rr := httptest.NewRecorder()
+	resp := NewResponse(rr)
+	ctx := getDefaultContext(nil, resp)
+	n, err := ctx.String("")
+	if err != nil {
+		t.Fatalf("String returned error: %v", err)
+	}
+	if n != 0 {
+		t.Errorf("Expected String to write 0 bytes, got %d", n)
+	}
+
+	resp.send()
+
+	if rr.Body.String() != "" {
+		t.Errorf("Expected empty body, got '%s'", rr.Body.String())
+	}
+	if rr.Header().Get("Content-Type") != "text/plain; charset=utf-8" {
+		t.Errorf("Expected Content-Type 'text/plain; charset=utf-8', got %v", rr.Header().Get("Content-Type"))
+	}
+}
+
+func TestContext_JSON_Nil(t *testing.T) {
+	rr := httptest.NewRecorder()
+	resp := NewResponse(rr)
+	ctx := getDefaultContext(nil, resp)
+	n, err := ctx.JSON(nil)
+	if err != nil {
+		t.Fatalf("JSON returned error: %v", err)
+	}
+	expectedJSON := "null"
+	if n != len(expectedJSON) {
+		t.Errorf("Expected JSON to write %d bytes, got %d", len(expectedJSON), n)
+	}
+
+	resp.send()
+
+	if rr.Body.String() != expectedJSON {
+		t.Errorf("Expected sent body 'null', got '%s'", rr.Body.String())
+	}
+	if rr.Header().Get("Content-Type") != "application/json" {
+		t.Errorf("Expected Content-Type 'application/json', got %v", rr.Header().Get("Content-Type"))
+	}
+}
+
+func TestContext_JSON_MarshalError_NoContentTypeSideEffect(t *testing.T) {
+	resp := NewResponse(httptest.NewRecorder())
+	ctx := getDefaultContext(nil, resp)
+	// channel types cannot be marshaled — Content-Type must NOT be set on failure
+	_, err := ctx.JSON(make(chan int))
+	if err == nil {
+		t.Fatalf("Expected JSON to return error for unmarshalable type")
+	}
+	if ctx.GetHeader("Content-Type") != "" {
+		t.Errorf("Expected no Content-Type header to be set on marshal error, got '%s'", ctx.GetHeader("Content-Type"))
+	}
+}
+
+func TestContext_Redirect(t *testing.T) {
+	rr := httptest.NewRecorder()
+	resp := NewResponse(rr)
+	ctx := getDefaultContext(nil, resp)
+
+	err := ctx.Redirect("https://example.com", http.StatusMovedPermanently)
+	if err != nil {
+		t.Fatalf("Redirect returned error: %v", err)
+	}
+
+	resp.send()
+
+	if rr.Header().Get("Location") != "https://example.com" {
+		t.Errorf("Expected Location header to be set to 'https://example.com', got %v", rr.Header().Get("Location"))
+	}
+	if rr.Header().Get("Content-Type") != "text/html; charset=utf-8" {
+		t.Errorf("Expected Content-Type 'text/html; charset=utf-8', got %v", rr.Header().Get("Content-Type"))
+	}
+
+	if rr.Code != http.StatusMovedPermanently {
+		t.Errorf("Expected status code %d, got %d", http.StatusMovedPermanently, rr.Code)
+	}
+	expectedBody := `<a href="https://example.com">Moved Permanently</a>`
+	if rr.Body.String() != expectedBody {
+		t.Errorf("Expected body '%s', got '%s'", expectedBody, rr.Body.String())
+	}
+}
+
+func TestContext_Redirect_DefaultStatus(t *testing.T) {
+	rr := httptest.NewRecorder()
+	resp := NewResponse(rr)
+	ctx := getDefaultContext(nil, resp)
+
+	err := ctx.Redirect("https://example.com")
+	if err != nil {
+		t.Fatalf("Redirect returned error: %v", err)
+	}
+
+	resp.send()
+
+	if rr.Header().Get("Location") != "https://example.com" {
+		t.Errorf("Expected Location header to be set to 'https://example.com', got %v", rr.Header().Get("Location"))
+	}
+	if rr.Header().Get("Content-Type") != "text/html; charset=utf-8" {
+		t.Errorf("Expected Content-Type 'text/html; charset=utf-8', got %v", rr.Header().Get("Content-Type"))
+	}
+	if rr.Code != http.StatusFound {
+		t.Errorf("Expected status code %d, got %d", http.StatusFound, rr.Code)
+	}
+	expectedBody := `<a href="https://example.com">Found</a>`
+	if rr.Body.String() != expectedBody {
+		t.Errorf("Expected body '%s', got '%s'", expectedBody, rr.Body.String())
+	}
+}
+
+func TestContext_Redirect_InvalidCode(t *testing.T) {
+	rr := httptest.NewRecorder()
+	resp := NewResponse(rr)
+	ctx := getDefaultContext(nil, resp)
+
+	err := ctx.Redirect("https://example.com", http.StatusBadRequest)
+	if err == nil {
+		t.Fatalf("Expected Redirect to return error for non-redirect status code 400")
+	}
+
+	err = ctx.Redirect("https://example.com", 200)
+	if err == nil {
+		t.Fatalf("Expected Redirect to return error for non-redirect status code 200")
+	}
+
+	err = ctx.Redirect("https://example.com", 500)
+	if err == nil {
+		t.Fatalf("Expected Redirect to return error for non-redirect status code 500")
+	}
+
+	// Verify no headers were set on error
+	if rr.Header().Get("Location") != "" {
+		t.Errorf("Expected no Location header to be set on error")
+	}
+	if rr.Header().Get("Content-Type") != "" {
+		t.Errorf("Expected no Content-Type header to be set on error")
+	}
+}
+
+func TestContext_Redirect_XSSEscaping(t *testing.T) {
+	rr := httptest.NewRecorder()
+	resp := NewResponse(rr)
+	ctx := getDefaultContext(nil, resp)
+
+	dangerousLink := `https://example.com/<script>alert("xss")</script>`
+	err := ctx.Redirect(dangerousLink)
+	if err != nil {
+		t.Fatalf("Redirect returned error: %v", err)
+	}
+
+	resp.send()
+
+	// Verify dangerous characters are escaped in body
+	body := rr.Body.String()
+	if strings.Contains(body, "<script>") {
+		t.Errorf("Expected script tag to be escaped in body, got '%s'", body)
+	}
+	// Location header should remain unescaped (raw URL)
+	if rr.Header().Get("Location") != dangerousLink {
+		t.Errorf("Expected Location header to remain unescaped, got %v", rr.Header().Get("Location"))
+	}
+}
+
+func TestContext_Redirect_BodyOnStatus(t *testing.T) {
+	tests := []struct {
+		code       int
+		statusText string
+	}{
+		{http.StatusMultipleChoices, "Multiple Choices"},
+		{http.StatusMovedPermanently, "Moved Permanently"},
+		{http.StatusFound, "Found"},
+		{http.StatusSeeOther, "See Other"},
+		{http.StatusTemporaryRedirect, "Temporary Redirect"},
+		{http.StatusPermanentRedirect, "Permanent Redirect"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.statusText, func(t *testing.T) {
+			rr := httptest.NewRecorder()
+			resp := NewResponse(rr)
+			ctx := getDefaultContext(nil, resp)
+
+			err := ctx.Redirect("https://example.com/path", tt.code)
+			if err != nil {
+				t.Fatalf("Redirect returned error: %v", err)
+			}
+
+			resp.send()
+
+			if rr.Code != tt.code {
+				t.Errorf("Expected status code %d, got %d", tt.code, rr.Code)
+			}
+			if rr.Header().Get("Content-Type") != "text/html; charset=utf-8" {
+				t.Errorf("Expected Content-Type 'text/html; charset=utf-8', got %v", rr.Header().Get("Content-Type"))
+			}
+			expectedBody := fmt.Sprintf(`<a href="https://example.com/path">%s</a>`, tt.statusText)
+			if rr.Body.String() != expectedBody {
+				t.Errorf("Expected body '%s', got '%s'", expectedBody, rr.Body.String())
+			}
+		})
+	}
+}
+
+func TestContext_Redirect_PreserveContentType(t *testing.T) {
+	rr := httptest.NewRecorder()
+	resp := NewResponse(rr)
+	ctx := getDefaultContext(nil, resp)
+
+	ctx.SetHeader("Content-Type", "text/html; charset=utf-8")
+	err := ctx.Redirect("https://example.com", http.StatusFound)
+	if err != nil {
+		t.Fatalf("Redirect returned error: %v", err)
+	}
+
+	resp.send()
+
+	if rr.Header().Get("Content-Type") != "text/html; charset=utf-8" {
+		t.Errorf("Expected Content-Type to be preserved as 'text/html; charset=utf-8', got %v", rr.Header().Get("Content-Type"))
+	}
+	if rr.Header().Get("Location") != "https://example.com" {
+		t.Errorf("Expected Location header 'https://example.com', got %v", rr.Header().Get("Location"))
+	}
+	if rr.Code != http.StatusFound {
+		t.Errorf("Expected status code %d, got %d", http.StatusFound, rr.Code)
 	}
 }
 
