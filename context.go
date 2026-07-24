@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"html"
 	"io"
 	"mime"
 	"net/http"
@@ -342,23 +341,14 @@ func (ctx *Context) Redirect(link string, code ...int) error {
 	switch statusCode {
 	case http.StatusMultipleChoices, http.StatusMovedPermanently, http.StatusFound, http.StatusSeeOther,
 		http.StatusTemporaryRedirect, http.StatusPermanentRedirect:
-		ctx.Status(statusCode)
+		// the status code is always valid
+		_ = ctx.Status(statusCode)
 	default:
 		return fmt.Errorf("invalid redirect status code: %d", statusCode)
 	}
 
 	ctx.SetHeader("Location", link)
-	if ctx.GetHeader("Content-Type") == "" {
-		ctx.SetHeader("Content-Type", "text/html; charset=utf-8")
-	}
 
-	str := fmt.Sprintf("<a href=\"%s\">%s</a>", html.EscapeString(link), http.StatusText(statusCode))
-	n, err := ctx.res.Write([]byte(str))
-	if err != nil {
-		return err
-	} else if n != len(str) {
-		return errors.New("failed to write complete redirect response")
-	}
 	return nil
 }
 

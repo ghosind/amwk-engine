@@ -3,12 +3,10 @@ package engine_test
 import (
 	"bytes"
 	"errors"
-	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
 	"reflect"
-	"strings"
 	"testing"
 
 	"github.com/go-amwk/core"
@@ -791,16 +789,8 @@ func TestContext_Redirect(t *testing.T) {
 	if rr.Header().Get("Location") != "https://example.com" {
 		t.Errorf("Expected Location header to be set to 'https://example.com', got %v", rr.Header().Get("Location"))
 	}
-	if rr.Header().Get("Content-Type") != "text/html; charset=utf-8" {
-		t.Errorf("Expected Content-Type 'text/html; charset=utf-8', got %v", rr.Header().Get("Content-Type"))
-	}
-
 	if rr.Code != http.StatusMovedPermanently {
 		t.Errorf("Expected status code %d, got %d", http.StatusMovedPermanently, rr.Code)
-	}
-	expectedBody := `<a href="https://example.com">Moved Permanently</a>`
-	if rr.Body.String() != expectedBody {
-		t.Errorf("Expected body '%s', got '%s'", expectedBody, rr.Body.String())
 	}
 }
 
@@ -819,15 +809,8 @@ func TestContext_Redirect_DefaultStatus(t *testing.T) {
 	if rr.Header().Get("Location") != "https://example.com" {
 		t.Errorf("Expected Location header to be set to 'https://example.com', got %v", rr.Header().Get("Location"))
 	}
-	if rr.Header().Get("Content-Type") != "text/html; charset=utf-8" {
-		t.Errorf("Expected Content-Type 'text/html; charset=utf-8', got %v", rr.Header().Get("Content-Type"))
-	}
 	if rr.Code != http.StatusFound {
 		t.Errorf("Expected status code %d, got %d", http.StatusFound, rr.Code)
-	}
-	expectedBody := `<a href="https://example.com">Found</a>`
-	if rr.Body.String() != expectedBody {
-		t.Errorf("Expected body '%s', got '%s'", expectedBody, rr.Body.String())
 	}
 }
 
@@ -854,33 +837,6 @@ func TestContext_Redirect_InvalidCode(t *testing.T) {
 	// Verify no headers were set on error
 	if rr.Header().Get("Location") != "" {
 		t.Errorf("Expected no Location header to be set on error")
-	}
-	if rr.Header().Get("Content-Type") != "" {
-		t.Errorf("Expected no Content-Type header to be set on error")
-	}
-}
-
-func TestContext_Redirect_XSSEscaping(t *testing.T) {
-	rr := httptest.NewRecorder()
-	resp := NewResponse(rr)
-	ctx := getDefaultContext(nil, resp)
-
-	dangerousLink := `https://example.com/<script>alert("xss")</script>`
-	err := ctx.Redirect(dangerousLink)
-	if err != nil {
-		t.Fatalf("Redirect returned error: %v", err)
-	}
-
-	resp.send()
-
-	// Verify dangerous characters are escaped in body
-	body := rr.Body.String()
-	if strings.Contains(body, "<script>") {
-		t.Errorf("Expected script tag to be escaped in body, got '%s'", body)
-	}
-	// Location header should remain unescaped (raw URL)
-	if rr.Header().Get("Location") != dangerousLink {
-		t.Errorf("Expected Location header to remain unescaped, got %v", rr.Header().Get("Location"))
 	}
 }
 
@@ -913,38 +869,7 @@ func TestContext_Redirect_BodyOnStatus(t *testing.T) {
 			if rr.Code != tt.code {
 				t.Errorf("Expected status code %d, got %d", tt.code, rr.Code)
 			}
-			if rr.Header().Get("Content-Type") != "text/html; charset=utf-8" {
-				t.Errorf("Expected Content-Type 'text/html; charset=utf-8', got %v", rr.Header().Get("Content-Type"))
-			}
-			expectedBody := fmt.Sprintf(`<a href="https://example.com/path">%s</a>`, tt.statusText)
-			if rr.Body.String() != expectedBody {
-				t.Errorf("Expected body '%s', got '%s'", expectedBody, rr.Body.String())
-			}
 		})
-	}
-}
-
-func TestContext_Redirect_PreserveContentType(t *testing.T) {
-	rr := httptest.NewRecorder()
-	resp := NewResponse(rr)
-	ctx := getDefaultContext(nil, resp)
-
-	ctx.SetHeader("Content-Type", "text/html; charset=utf-8")
-	err := ctx.Redirect("https://example.com", http.StatusFound)
-	if err != nil {
-		t.Fatalf("Redirect returned error: %v", err)
-	}
-
-	resp.send()
-
-	if rr.Header().Get("Content-Type") != "text/html; charset=utf-8" {
-		t.Errorf("Expected Content-Type to be preserved as 'text/html; charset=utf-8', got %v", rr.Header().Get("Content-Type"))
-	}
-	if rr.Header().Get("Location") != "https://example.com" {
-		t.Errorf("Expected Location header 'https://example.com', got %v", rr.Header().Get("Location"))
-	}
-	if rr.Code != http.StatusFound {
-		t.Errorf("Expected status code %d, got %d", http.StatusFound, rr.Code)
 	}
 }
 
