@@ -2,7 +2,9 @@ package engine
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"mime"
 	"net/http"
@@ -304,6 +306,50 @@ func (ctx *Context) Status(code int) error {
 // Write writes data to the response body.
 func (ctx *Context) Write(data []byte) (int, error) {
 	return ctx.res.Write(data)
+}
+
+// String writes a string to the response body.
+func (ctx *Context) String(s string) (int, error) {
+	if ctx.GetHeader("Content-Type") == "" {
+		ctx.SetHeader("Content-Type", "text/plain; charset=utf-8")
+	}
+
+	return ctx.res.Write([]byte(s))
+}
+
+// JSON serializes the given value to JSON and writes it to the response body.
+func (ctx *Context) JSON(v any) (int, error) {
+	jsonData, err := json.Marshal(v)
+	if err != nil {
+		return 0, err
+	}
+
+	if ctx.GetHeader("Content-Type") == "" {
+		ctx.SetHeader("Content-Type", "application/json")
+	}
+
+	return ctx.res.Write(jsonData)
+}
+
+// Redirect sets the Location header and writes a redirect response with the specified status code,
+// defaulting to 302 Found if no code is provided.
+func (ctx *Context) Redirect(link string, code ...int) error {
+	statusCode := http.StatusFound
+	if len(code) > 0 {
+		statusCode = code[0]
+	}
+	switch statusCode {
+	case http.StatusMultipleChoices, http.StatusMovedPermanently, http.StatusFound, http.StatusSeeOther,
+		http.StatusTemporaryRedirect, http.StatusPermanentRedirect:
+		// the status code is always valid
+		_ = ctx.Status(statusCode)
+	default:
+		return fmt.Errorf("invalid redirect status code: %d", statusCode)
+	}
+
+	ctx.SetHeader("Location", link)
+
+	return nil
 }
 
 // Request returns the wrapped Request object associated with the context.
