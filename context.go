@@ -133,8 +133,9 @@ func (ctx *Context) Next() error {
 // handlers at the tail of the chain will still execute.
 //
 // Use is NOT safe for concurrent use from multiple goroutines.
-func (ctx *Context) Use(handlers ...core.HandlerFunc) {
+func (ctx *Context) Use(handlers ...core.HandlerFunc) core.Context {
 	ctx.handlers = append(ctx.handlers, handlers...)
+	return ctx
 }
 
 // Body returns the request body as a readable stream.
@@ -293,6 +294,11 @@ func (ctx *Context) DelHeader(key string) {
 	ctx.res.DelHeader(key)
 }
 
+// Size returns the size of the response body in bytes.
+func (ctx *Context) Size() int {
+	return ctx.res.Size()
+}
+
 // Status sets the HTTP status code for the response and returns an error if it fails.
 func (ctx *Context) Status(code int) error {
 	if code < 100 || code > 999 {
@@ -306,6 +312,16 @@ func (ctx *Context) Status(code int) error {
 // Write writes data to the response body.
 func (ctx *Context) Write(data []byte) (int, error) {
 	return ctx.res.Write(data)
+}
+
+// WriteString writes a string to the response body.
+func (ctx *Context) WriteString(s string) (int, error) {
+	return ctx.res.WriteString(s)
+}
+
+// Written returns the data that has been written to the response body so far.
+func (ctx *Context) Written() []byte {
+	return ctx.res.Written()
 }
 
 // String writes a string to the response body.
