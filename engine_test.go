@@ -97,6 +97,11 @@ func (r *Response) Headers() http.Header          { return r.rw.Header() }
 func (r *Response) Write(d []byte) (int, error) {
 	return r.body.Write(d)
 }
+func (r *Response) WriteString(s string) (int, error) {
+	return r.body.WriteString(s)
+}
+func (r *Response) Written() []byte { return r.body.Bytes() }
+func (r *Response) Size() int       { return r.body.Len() }
 func (r *Response) Status(code int) { r.code = code }
 func (r *Response) StatusCode() int { return r.code }
 func (r *Response) Response() any   { return r }
